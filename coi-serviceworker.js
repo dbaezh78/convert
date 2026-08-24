@@ -1,4 +1,4 @@
-﻿/* coi-serviceworker v0.1.7 - Guido Zuidhof, licensed under MIT
+/* coi-serviceworker v0.1.7 - Guido Zuidhof, licensed under MIT
  * Adds Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers
  * to enable SharedArrayBuffer on static sites (no server config needed).
  * https://github.com/gzuidhof/coi-serviceworker
@@ -38,8 +38,9 @@ if (typeof window === "undefined") {
   if (!window.crossOriginIsolated) {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
-        .register(window.location.href)
+        .register("/coi-serviceworker.js")
         .then(reg => {
+          // SW registered — if it's already active but not yet controlling, reload once
           if (reg.active && !navigator.serviceWorker.controller) {
             window.location.reload();
           }
