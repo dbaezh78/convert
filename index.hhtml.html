@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conversor de Audio Universal</title>
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --accent: #3b82f6;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 480px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    h2 {
+      margin: 0;
+      font-size: 1.5rem;
+      text-align: center;
+    }
+    p {
+      margin: 0;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    label {
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+    input[type="file"], select, button {
+      padding: 0.75rem;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: var(--text);
+      font-size: 0.95rem;
+      outline: none;
+    }
+    button {
+      background: var(--accent);
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      margin-top: 0.5rem;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .status {
+      font-size: 0.875rem;
+      color: var(--accent);
+      min-height: 1.2em;
+      text-align: center;
+    }
+    .download-area {
+      display: none;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding-top: 1rem;
+      border-top: 1px solid #334155;
+    }
+    audio {
+      width: 100%;
+    }
+    .btn-download {
+      background: #10b981;
+      text-align: center;
+      text-decoration: none;
+      color: white;
+      padding: 0.75rem;
+      border-radius: 8px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>Conversor de Audio</h2>
+  <p>Convierte M4A, MP3, WAV, AAC, OGG y FLAC localmente en tu navegador.</p>
+
+  <div class="form-group">
+    <label for="audioFile">1. Selecciona el archivo de audio:</label>
+    <input type="file" id="audioFile" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac" />
+  </div>
+
+  <div class="form-group">
+    <label for="targetFormat">2. Formato de salida:</label>
+    <select id="targetFormat">
+      <option value="mp3">MP3</option>
+      <option value="m4a">M4A (AAC)</option>
+      <option value="wav">WAV</option>
+      <option value="ogg">OGG (Vorbis)</option>
+      <option value="flac">FLAC</option>
+      <option value="aac">AAC</option>
+    </select>
+  </div>
+
+  <button id="convertBtn">Convertir Audio</button>
+  <div class="status" id="statusText"></div>
+
+  <div class="download-area" id="downloadArea">
+    <label>Resultado:</label>
+    <audio id="audioPreview" controls></audio>
+    <a id="downloadLink" class="btn-download" download>Descargar archivo</a>
+  </div>
+</div>
+
+<script>
+  const { FFmpeg } = FFmpegWASM;
+  const { fetchFile } = FFmpegUtil;
+
+  let ffmpeg = null;
+  const audioFileInput = document.getElementById('audioFile');
+  const targetFormatSelect = document.getElementById('targetFormat');
+  const convertBtn = document.getElementById('convertBtn');
+  const statusText = document.getElementById('statusText');
+  const downloadArea = document.getElementById('downloadArea');
+  const audioPreview = document.getElementById('audioPreview');
+  const downloadLink = document.getElementById('downloadLink');
+
+  convertBtn.addEventListener('click', async () => {
+    const file = audioFileInput.files[0];
+    if (!file) {
+      statusText.textContent = 'Por favor selecciona un archivo primero.';
+      return;
+    }
+
+    const outputFormat = targetFormatSelect.value;
+    const inputExt = file.name.split('.').pop();
+    const inputName = `input.${inputExt}`;
+    const outputName = `output.${outputFormat}`;
+
+    convertBtn.disabled = true;
+    downloadArea.style.display = 'none';
+
+    try {
+      if (!ffmpeg) {
+        statusText.textContent = 'Cargando motor de conversión FFmpeg...';
+        ffmpeg = new FFmpeg();
+        await ffmpeg.load({
+          coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+          wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+        });
+      }
+
+      statusText.textContent = 'Procesando archivo...';
+      const fileData = await fetchFile(file);
+      await ffmpeg.writeFile(inputName, fileData);
+
+      statusText.textContent = `Convirtiendo a ${outputFormat.toUpperCase()}...`;
+      await ffmpeg.exec(['-i', inputName, outputName]);
+
+      const data = await ffmpeg.readFile(outputName);
+      const mimeTypes = {
+        mp3: 'audio/mpeg',
+        m4a: 'audio/mp4',
+        wav: 'audio/wav',
+        ogg: 'audio/ogg',
+        flac: 'audio/flac',
+        aac: 'audio/aac'
+      };
+
+      const blob = new Blob([data.buffer], { type: mimeTypes[outputFormat] || 'audio/octet-stream' });
+      const url = URL.createObjectURL(blob);
+
+      audioPreview.src = url;
+      downloadLink.href = url;
+      
+      const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      downloadLink.download = `${baseName}.${outputFormat}`;
+
+      downloadArea.style.display = 'flex';
+      statusText.textContent = '¡Conversión completada!';
+
+      // Limpieza de memoria en FFmpeg
+      await ffmpeg.deleteFile(inputName);
+      await ffmpeg.deleteFile(outputName);
+    } catch (err) {
+      console.error(err);
+      statusText.textContent = 'Error durante la conversión. Revisa la consola.';
+    } finally {
+      convertBtn.disabled = false;
+    }
+  });
+</script>
+
+</body>
+</html>
