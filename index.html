@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conversor de Audio</title>
+  <!-- COI Service Worker: habilita SharedArrayBuffer en hosting estático -->
+  <script src="/coi-serviceworker.js"></script>
+  <!-- FFmpeg 0.11.6: estable, sin problemas de cross-origin worker -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --success: #10b981;
+      --error: #ef4444;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 500px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .header { text-align: center; }
+
+    h2 {
+      margin: 0 0 0.4rem;
+      font-size: 1.6rem;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      margin: 0;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .drop-zone-icon { font-size: 2.5rem; margin-bottom: 0.5rem; pointer-events: none; }
+    .drop-zone-text { font-size: 0.9rem; color: var(--text-muted); pointer-events: none; }
+    .drop-zone-text strong { color: var(--accent); }
+    .file-name {
+      margin-top: 0.5rem;
+      font-size: 0.82rem;
+      color: var(--success);
+      word-break: break-all;
+      pointer-events: none;
+    }
+
+    select {
+      padding: 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.95rem;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.75rem center;
+      padding-right: 2.5rem;
+    }
+
+    select:focus { border-color: var(--accent); }
+
+    button {
+      padding: 0.85rem;
+      border-radius: 10px;
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      letter-spacing: 0.02em;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .progress-wrap {
+      display: none;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .progress-bar-bg {
+      background: var(--border);
+      border-radius: 99px;
+      height: 6px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 99px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .progress-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-align: right;
+    }
+
+    .status {
+      font-size: 0.875rem;
+      min-height: 1.2em;
+      text-align: center;
+      word-break: break-word;
+      color: var(--text-muted);
+    }
+
+    .status.error   { color: var(--error); }
+    .status.success { color: var(--success); }
+    .status.info    { color: var(--accent); }
+
+    .download-area {
+      display: none;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+
+    audio { width: 100%; border-radius: 8px; }
+
+    .btn-download {
+      display: block;
+      background: var(--success);
+      text-align: center;
+      text-decoration: none;
+      color: white;
+      padding: 0.85rem;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 1rem;
+      transition: opacity 0.2s;
+    }
+
+    .btn-download:hover { opacity: 0.88; }
+
+    .convert-another {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 0.6rem;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: color 0.2s;
+    }
+
+    .convert-another:hover:not(:disabled) {
+      color: var(--text);
+      background: transparent;
+      transform: none;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="header">
+    <h2>🎵 Conversor de Audio</h2>
+    <p class="subtitle">Convierte entre MP3, M4A, WAV, OGG, FLAC y AAC — 100% local, sin subir archivos.</p>
+  </div>
+
+  <div class="form-group">
+    <label>1. Selecciona el archivo de audio</label>
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="audioFile" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.opus,.wma,.amr" />
+      <div class="drop-zone-icon">📂</div>
+      <div class="drop-zone-text">Arrastra aquí o <strong>haz clic para elegir</strong></div>
+      <div class="file-name" id="fileName"></div>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>2. Formato de salida</label>
+    <select id="targetFormat">
+      <option value="mp3">MP3</option>
+      <option value="m4a">M4A (AAC)</option>
+      <option value="wav">WAV</option>
+      <option value="ogg">OGG (Vorbis)</option>
+      <option value="flac">FLAC</option>
+      <option value="aac">AAC</option>
+    </select>
+  </div>
+
+  <button id="convertBtn">Convertir Audio</button>
+
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-label" id="progressLabel">0%</div>
+  </div>
+
+  <div class="status" id="statusText"></div>
+
+  <div class="download-area" id="downloadArea">
+    <label>Resultado:</label>
+    <audio id="audioPreview" controls></audio>
+    <a id="downloadLink" class="btn-download" download>⬇ Descargar archivo convertido</a>
+    <button class="convert-another" id="convertAnotherBtn">Convertir otro archivo</button>
+  </div>
+</div>
+
+<script>
+  const { createFFmpeg, fetchFile } = FFmpeg;
+
+  const audioFileInput    = document.getElementById('audioFile');
+  const dropZone          = document.getElementById('dropZone');
+  const fileNameEl        = document.getElementById('fileName');
+  const targetFormatSel   = document.getElementById('targetFormat');
+  const convertBtn        = document.getElementById('convertBtn');
+  const statusText        = document.getElementById('statusText');
+  const downloadArea      = document.getElementById('downloadArea');
+  const audioPreview      = document.getElementById('audioPreview');
+  const downloadLink      = document.getElementById('downloadLink');
+  const progressWrap      = document.getElementById('progressWrap');
+  const progressFill      = document.getElementById('progressFill');
+  const progressLabel     = document.getElementById('progressLabel');
+  const convertAnotherBtn = document.getElementById('convertAnotherBtn');
+
+  let ffmpeg = null;
+  let currentBlobUrl = null;
+
+  // Drag & Drop
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) {
+      audioFileInput.files = e.dataTransfer.files;
+      updateFileName();
+    }
+  });
+
+  audioFileInput.addEventListener('change', updateFileName);
+
+  function updateFileName() {
+    const file = audioFileInput.files[0];
+    fileNameEl.textContent = file ? `✔ ${file.name}` : '';
+  }
+
+  function setStatus(msg, type = '') {
+    statusText.textContent = msg;
+    statusText.className = 'status ' + type;
+  }
+
+  function setProgress(pct) {
+    progressFill.style.width = pct + '%';
+    progressLabel.textContent = Math.round(pct) + '%';
+  }
+
+  const FORMAT_ARGS = {
+    mp3:  ['-c:a', 'libmp3lame', '-q:a', '2'],
+    m4a:  ['-c:a', 'aac',        '-b:a', '192k'],
+    wav:  ['-c:a', 'pcm_s16le'],
+    ogg:  ['-c:a', 'libvorbis',  '-q:a', '4'],
+    flac: ['-c:a', 'flac'],
+    aac:  ['-c:a', 'aac',        '-b:a', '192k'],
+  };
+
+  const MIME_TYPES = {
+    mp3:  'audio/mpeg',
+    m4a:  'audio/mp4',
+    wav:  'audio/wav',
+    ogg:  'audio/ogg',
+    flac: 'audio/flac',
+    aac:  'audio/aac',
+  };
+
+  async function loadFFmpeg() {
+    if (ffmpeg && ffmpeg.isLoaded()) return;
+    setStatus('Cargando motor de conversión (primera vez puede tardar)…', 'info');
+
+    ffmpeg = createFFmpeg({
+      log: false,
+      corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+      progress: ({ ratio }) => {
+        const pct = Math.min(Math.round(ratio * 100), 99);
+        setProgress(pct);
+      },
+    });
+
+    await ffmpeg.load();
+  }
+
+  convertBtn.addEventListener('click', async () => {
+    const file = audioFileInput.files[0];
+    if (!file) { setStatus('⚠ Por favor selecciona un archivo primero.', 'error'); return; }
+
+    const outputFormat = targetFormatSel.value;
+    const inputExt     = file.name.split('.').pop().toLowerCase();
+    const inputName    = `input.${inputExt}`;
+    const outputName   = `output.${outputFormat}`;
+
+    convertBtn.disabled = true;
+    downloadArea.style.display = 'none';
+    progressWrap.style.display = 'flex';
+    setProgress(0);
+
+    try {
+      await loadFFmpeg();
+
+      setStatus('Procesando archivo…', 'info');
+      ffmpeg.FS('writeFile', inputName, await fetchFile(file));
+
+      setStatus(`Convirtiendo a ${outputFormat.toUpperCase()}…`, 'info');
+      await ffmpeg.run('-i', inputName, ...(FORMAT_ARGS[outputFormat] || []), outputName);
+
+      setProgress(100);
+
+      const data = ffmpeg.FS('readFile', outputName);
+      if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+      currentBlobUrl = URL.createObjectURL(
+        new Blob([data.buffer], { type: MIME_TYPES[outputFormat] || 'audio/octet-stream' })
+      );
+
+      audioPreview.src = currentBlobUrl;
+      downloadLink.href = currentBlobUrl;
+      const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      downloadLink.download = `${baseName}.${outputFormat}`;
+
+      downloadArea.style.display = 'flex';
+      setStatus('✅ ¡Conversión exitosa!', 'success');
+
+      try { ffmpeg.FS('unlink', inputName);  } catch (_) {}
+      try { ffmpeg.FS('unlink', outputName); } catch (_) {}
+
+    } catch (err) {
+      console.error(err);
+      if (!window.crossOriginIsolated) {
+        setStatus('❌ El sitio no está aislado (COOP/COEP). Recarga la página e intenta de nuevo.', 'error');
+      } else {
+        setStatus('❌ Error al convertir. Verifica que el archivo sea un audio válido.', 'error');
+      }
+      progressWrap.style.display = 'none';
+    } finally {
+      convertBtn.disabled = false;
+    }
+  });
+
+  convertAnotherBtn.addEventListener('click', () => {
+    audioFileInput.value = '';
+    fileNameEl.textContent = '';
+    downloadArea.style.display = 'none';
+    progressWrap.style.display = 'none';
+    setProgress(0);
+    setStatus('');
+  });
+</script>
+
+</body>
+</html>
